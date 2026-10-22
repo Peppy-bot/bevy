@@ -69,7 +69,7 @@ fn irradiance_volume_light(
         let rgb_z = textureSampleLevel(irradiance_volume_texture, irradiance_volume_sampler, uvw_z, 0.0).rgb;
 
         // Use Valve's formula to sample.
-        let NN = N * N;
+        let NN = saturate(N * N);
         total_irradiance += (rgb_x * NN.x + rgb_y * NN.y + rgb_z * NN.z) * query_result.intensity *
             query_result.weight;
 
