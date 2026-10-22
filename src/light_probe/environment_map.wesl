@@ -248,7 +248,7 @@ fn compute_radiances(
     var enable_diffuse = !found_diffuse_indirect;
     @if(LIGHTMAP)
     enable_diffuse = enable_diffuse &&
-        light_probes.view_environment_map_affects_lightmapped_mesh_diffuse;
+        light_probes.view_environment_map_affects_lightmapped_mesh_diffuse != 0u;
 
     if (enable_diffuse) {
         var irradiance_sample_dir = N;
