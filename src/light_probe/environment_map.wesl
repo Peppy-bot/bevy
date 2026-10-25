@@ -405,3 +405,57 @@ fn radiance_sample_direction(N: vec3<f32>, R: vec3<f32>, roughness: f32) -> vec3
     let lerp_factor = smoothness * (sqrt(smoothness) + roughness);
     return mix(N, R, lerp_factor);
 }
+
+/// The scale that brings the view environment map's reflection on a fragment
+/// to the level of the baked light that reaches the fragment.
+///
+/// `baked_irradiance` is the light that a lightmap or an irradiance volume
+/// gives the fragment along its normal `N`, in the units of the map's diffuse
+/// light. The scale is its luminance over the luminance of the map's own
+/// diffuse light along the direction that the reflection samples
+/// (`radiance_sample_direction` of `N`, the reflected view direction `R` and
+/// `roughness`). The scaled reflection is the baked light times the map's
+/// reflection over the map's diffuse light along one direction: it keeps the
+/// detail of the map at the level of the baked light, and a rough surface
+/// reflects about its baked light. Along `N` in the place of that direction,
+/// a glossy surface seen at a grazing angle would multiply a bright part of
+/// the map by a scale that a dark side of the map gave.
+///
+/// The scale is 1 without a view environment map, and where the map gives no
+/// diffuse light along that direction.
+fn baked_reflection_scale(
+    baked_irradiance: vec3<f32>,
+    N: vec3<f32>,
+    R: vec3<f32>,
+    roughness: f32,
+) -> f32 {
+    if (light_probes.view_cubemap_index < 0) {
+        return 1.0;
+    }
+
+    var sample_dir = radiance_sample_direction(N, R, roughness);
+    // Rotating the world space ray direction by the environment map light view rotation,
+    // it is equivalent to rotating the environment cubemap itself.
+    sample_dir = quat_rotate(light_probes.view_rotation, sample_dir);
+    // Cube maps are left-handed so we negate the z coordinate.
+    sample_dir.z = -sample_dir.z;
+
+    @if(MULTIPLE_LIGHT_PROBES_IN_ARRAY)
+    let diffuse_map = bindings::diffuse_environment_maps[light_probes.view_cubemap_index];
+    @else
+    let diffuse_map = bindings::diffuse_environment_map;
+
+    let environment_irradiance = textureSampleLevel(
+        diffuse_map,
+        bindings::environment_map_sampler,
+        sample_dir,
+        0.0).rgb * light_probes.intensity_for_view;
+
+    // Rec. 709 luminance.
+    let to_luminance = vec3<f32>(0.2126, 0.7152, 0.0722);
+    let environment = dot(environment_irradiance, to_luminance);
+    if (environment <= 0.0) {
+        return 1.0;
+    }
+    return dot(baked_irradiance, to_luminance) / environment;
+}

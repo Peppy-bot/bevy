@@ -699,6 +699,11 @@ fn apply_pbr_lighting(
     found_diffuse_indirect = true;
 }
 
+    // The scale of the environment map's reflection. Where an irradiance
+    // volume holds the fragment, the reflection takes the level of the
+    // volume's light (`environment_map::baked_reflection_scale`).
+    var reflection_scale = 1.0;
+
     @if(IRRADIANCE_VOLUME)
     // Irradiance volume light (indirect)
     if (!found_diffuse_indirect) {
@@ -707,8 +712,18 @@ fn apply_pbr_lighting(
             in.N,
             &clusterable_object_index_ranges,
         );
-        indirect_light += irradiance_volume_light * diffuse_color * diffuse_occlusion;
+        indirect_light += irradiance_volume_light.irradiance * diffuse_color * diffuse_occlusion;
         found_diffuse_indirect = true;
+
+        @if(ENVIRONMENT_MAP)
+        if (irradiance_volume_light.found) {
+            reflection_scale = environment_map::baked_reflection_scale(
+                irradiance_volume_light.irradiance,
+                in.N,
+                R,
+                roughness,
+            );
+        }
     }
 
     // Environment map light (indirect)
@@ -740,7 +755,7 @@ fn apply_pbr_lighting(
 
     indirect_light += environment_light.diffuse * diffuse_occlusion;
     if (!use_ssr) {
-        indirect_light += environment_light.specular * specular_occlusion;
+        indirect_light += environment_light.specular * specular_occlusion * reflection_scale;
     }
 }
 
