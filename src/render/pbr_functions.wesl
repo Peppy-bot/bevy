@@ -722,6 +722,8 @@ fn apply_pbr_lighting(
                 in.N,
                 R,
                 roughness,
+                in.world_position.xyz,
+                &clusterable_object_index_ranges,
             );
         }
     }

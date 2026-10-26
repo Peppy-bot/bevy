@@ -406,51 +406,120 @@ fn radiance_sample_direction(N: vec3<f32>, R: vec3<f32>, roughness: f32) -> vec3
     return mix(N, R, lerp_factor);
 }
 
-/// The scale that brings the view environment map's reflection on a fragment
-/// to the level of the baked light that reaches the fragment.
+/// The diffuse light, along `direction` (a world direction), of the
+/// environment maps that give the fragment at `world_position` its
+/// reflection: the reflection probes that hold the fragment, weighted as
+/// `compute_radiances` weighs them, the view environment map making up the
+/// rest of the weight.
+@if(MULTIPLE_LIGHT_PROBES_IN_ARRAY)
+fn reflected_maps_irradiance(
+    world_position: vec3<f32>,
+    direction: vec3<f32>,
+    clusterable_object_index_ranges: ptr<function, ClusterableObjectIndexRanges>,
+) -> vec3<f32> {
+    var iterator = light_probe_iterator_new(
+        world_position,
+        /*is_irradiance_volume=*/ false,
+        clusterable_object_index_ranges,
+    );
+    var total_weight = 0.0;
+    var irradiance = vec3(0.0);
+    while (true) {
+        var query_result = light_probe_iterator_next(&iterator);
+        var view_rotation = vec4<f32>(0.0, 0.0, 0.0, 1.0);
+        if (query_result.texture_index < 0 && total_weight < 0.9999) {
+            query_result.texture_index = light_probes.view_cubemap_index;
+            query_result.intensity = light_probes.intensity_for_view;
+            view_rotation = light_probes.view_rotation;
+            query_result.light_from_world = mat4x4(
+                vec4(1.0, 0.0, 0.0, 0.0),
+                vec4(0.0, 1.0, 0.0, 0.0),
+                vec4(0.0, 0.0, 1.0, 0.0),
+                vec4(0.0, 0.0, 0.0, 1.0)
+            );
+            query_result.parallax_correction_bounds = vec3(0.0);
+            query_result.flags = 0u;
+            query_result.weight = 1.0 - total_weight;
+        }
+        if (query_result.texture_index < 0) {
+            break;
+        }
+        let sample_dir = compute_cubemap_sample_dir(
+            world_position,
+            direction,
+            query_result.light_from_world,
+            query_result.parallax_correction_bounds,
+            (query_result.flags & LIGHT_PROBE_FLAG_PARALLAX_CORRECT) != 0u,
+            view_rotation,
+        );
+        irradiance += textureSampleLevel(
+            bindings::diffuse_environment_maps[query_result.texture_index],
+            bindings::environment_map_sampler,
+            sample_dir,
+            0.0).rgb * query_result.intensity * query_result.weight;
+        total_weight += query_result.weight;
+    }
+    if (total_weight != 0.0) {
+        irradiance /= total_weight;
+    }
+    return irradiance;
+}
+
+@else   // MULTIPLE_LIGHT_PROBES_IN_ARRAY
+// The diffuse light, along `direction` (a world direction), of the view
+// environment map: without arrays of maps, it gives every reflection.
+fn reflected_maps_irradiance(
+    world_position: vec3<f32>,
+    direction: vec3<f32>,
+    clusterable_object_index_ranges: ptr<function, ClusterableObjectIndexRanges>,
+) -> vec3<f32> {
+    if (light_probes.view_cubemap_index < 0) {
+        return vec3(0.0);
+    }
+    // Rotating the world space ray direction by the environment map light view rotation,
+    // it is equivalent to rotating the environment cubemap itself.
+    var sample_dir = quat_rotate(light_probes.view_rotation, direction);
+    // Cube maps are left-handed so we negate the z coordinate.
+    sample_dir.z = -sample_dir.z;
+    return textureSampleLevel(
+        bindings::diffuse_environment_map,
+        bindings::environment_map_sampler,
+        sample_dir,
+        0.0).rgb * light_probes.intensity_for_view;
+}
+
+/// The scale that brings the environment maps' reflection on the fragment
+/// at `world_position` to the level of the baked light that reaches it.
 ///
 /// `baked_irradiance` is the light that a lightmap or an irradiance volume
-/// gives the fragment along its normal `N`, in the units of the map's diffuse
-/// light. The scale is its luminance over the luminance of the map's own
-/// diffuse light along the direction that the reflection samples
-/// (`radiance_sample_direction` of `N`, the reflected view direction `R` and
-/// `roughness`). The scaled reflection is the baked light times the map's
-/// reflection over the map's diffuse light along one direction: it keeps the
-/// detail of the map at the level of the baked light, and a rough surface
-/// reflects about its baked light. Along `N` in the place of that direction,
-/// a glossy surface seen at a grazing angle would multiply a bright part of
-/// the map by a scale that a dark side of the map gave.
+/// gives the fragment along its normal `N`, in the units of the maps'
+/// diffuse light. The scale is its luminance over the luminance of the
+/// diffuse light of the maps that give the fragment its reflection (the
+/// reflection probes that hold it, then the view environment map,
+/// `reflected_maps_irradiance`) along the direction that the reflection
+/// samples (`radiance_sample_direction` of `N`, the reflected view direction
+/// `R` and `roughness`). The scaled reflection is the baked light times the
+/// maps' reflection over the maps' diffuse light along one direction: it
+/// keeps the detail of the maps at the level of the baked light, and a rough
+/// surface reflects about its baked light. Along `N` in the place of that
+/// direction, a glossy surface seen at a grazing angle would multiply a
+/// bright part of a map by a scale that a dark side of the map gave.
 ///
-/// The scale is 1 without a view environment map, and where the map gives no
-/// diffuse light along that direction.
+/// The scale is 1 where no map reflects, and where the maps give no diffuse
+/// light along that direction.
 fn baked_reflection_scale(
     baked_irradiance: vec3<f32>,
     N: vec3<f32>,
     R: vec3<f32>,
     roughness: f32,
+    world_position: vec3<f32>,
+    clusterable_object_index_ranges: ptr<function, ClusterableObjectIndexRanges>,
 ) -> f32 {
-    if (light_probes.view_cubemap_index < 0) {
-        return 1.0;
-    }
-
-    var sample_dir = radiance_sample_direction(N, R, roughness);
-    // Rotating the world space ray direction by the environment map light view rotation,
-    // it is equivalent to rotating the environment cubemap itself.
-    sample_dir = quat_rotate(light_probes.view_rotation, sample_dir);
-    // Cube maps are left-handed so we negate the z coordinate.
-    sample_dir.z = -sample_dir.z;
-
-    @if(MULTIPLE_LIGHT_PROBES_IN_ARRAY)
-    let diffuse_map = bindings::diffuse_environment_maps[light_probes.view_cubemap_index];
-    @else
-    let diffuse_map = bindings::diffuse_environment_map;
-
-    let environment_irradiance = textureSampleLevel(
-        diffuse_map,
-        bindings::environment_map_sampler,
-        sample_dir,
-        0.0).rgb * light_probes.intensity_for_view;
-
+    let environment_irradiance = reflected_maps_irradiance(
+        world_position,
+        radiance_sample_direction(N, R, roughness),
+        clusterable_object_index_ranges,
+    );
     // Rec. 709 luminance.
     let to_luminance = vec3<f32>(0.2126, 0.7152, 0.0722);
     let environment = dot(environment_irradiance, to_luminance);
