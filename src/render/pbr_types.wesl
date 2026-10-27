@@ -121,6 +121,12 @@ struct PbrInput {
     /// Multiplier applied to all directional lights before cascade and contact shadows,
     /// use this for custom shadow maps. Defaults to 1.0.
     directional_shadow_factor: f32,
+    /// The scale of the environment maps' reflection, per channel. Defaults
+    /// to 1.0; a material that reads its own lightmap sets it to the
+    /// lightmap's `environment_map::baked_reflection_scale`, and
+    /// `apply_pbr_lighting` replaces it where an irradiance volume holds the
+    /// fragment.
+    reflection_scale: vec3<f32>,
 };
 
 /// Creates a PbrInput with default values
@@ -131,6 +137,7 @@ fn pbr_input_new() -> PbrInput {
     pbr_input.diffuse_occlusion = vec3<f32>(1.0);
     // If SSAO is enabled, then this gets overwritten with proper specular occlusion. If its not, then we get specular environment map unoccluded (we have no data with which to occlude it with).
     pbr_input.specular_occlusion = 1.0;
+    pbr_input.reflection_scale = vec3<f32>(1.0);
 
     pbr_input.frag_coord = vec4<f32>(0.0, 0.0, 0.0, 1.0);
     pbr_input.world_position = vec4<f32>(0.0, 0.0, 0.0, 1.0);

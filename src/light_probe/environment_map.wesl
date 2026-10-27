@@ -488,22 +488,33 @@ fn reflected_maps_irradiance(
         0.0).rgb * light_probes.intensity_for_view;
 }
 
-/// The scale that brings the environment maps' reflection on the fragment
-/// at `world_position` to the level of the baked light that reaches it.
+/// The least share of the luminance of the maps' diffuse light that
+/// `baked_reflection_scale` divides a channel of the baked light by: a
+/// darker channel of the maps would multiply its reflection's noise.
+const MIN_CHANNEL_SHARE: f32 = 0.05;
+
+/// The scale, per channel, that brings the environment maps' reflection on
+/// the fragment at `world_position` to the level and the colour of the baked
+/// light that reaches it.
 ///
 /// `baked_irradiance` is the light that a lightmap or an irradiance volume
 /// gives the fragment along its normal `N`, in the units of the maps'
-/// diffuse light. The scale is its luminance over the luminance of the
-/// diffuse light of the maps that give the fragment its reflection (the
-/// reflection probes that hold it, then the view environment map,
-/// `reflected_maps_irradiance`) along the direction that the reflection
-/// samples (`radiance_sample_direction` of `N`, the reflected view direction
-/// `R` and `roughness`). The scaled reflection is the baked light times the
-/// maps' reflection over the maps' diffuse light along one direction: it
-/// keeps the detail of the maps at the level of the baked light, and a rough
-/// surface reflects about its baked light. Along `N` in the place of that
-/// direction, a glossy surface seen at a grazing angle would multiply a
-/// bright part of a map by a scale that a dark side of the map gave.
+/// diffuse light. The scale of each channel is that channel of the baked
+/// light over the same channel of the diffuse light of the maps that give
+/// the fragment its reflection (the reflection probes that hold it, then
+/// the view environment map, `reflected_maps_irradiance`) along the
+/// direction that the reflection samples (`radiance_sample_direction` of
+/// `N`, the reflected view direction `R` and `roughness`), or over
+/// `MIN_CHANNEL_SHARE` of that light's luminance where the channel is
+/// darker. The scaled reflection is the baked light times the maps'
+/// reflection over the maps' diffuse light along one direction: it keeps
+/// the detail of the maps at the level and in the colour of the baked
+/// light, and a rough surface reflects about its baked light. The colour of
+/// a map, a photograph of another room or the sky that gives a room its
+/// reflections where no probe holds the fragment, does not show. Along `N`
+/// in the place of that direction, a glossy surface seen at a grazing angle
+/// would multiply a bright part of a map by a scale that a dark side of the
+/// map gave.
 ///
 /// The scale is 1 where no map reflects, and where the maps give no diffuse
 /// light along that direction.
@@ -514,17 +525,16 @@ fn baked_reflection_scale(
     roughness: f32,
     world_position: vec3<f32>,
     clusterable_object_index_ranges: ptr<function, ClusterableObjectIndexRanges>,
-) -> f32 {
+) -> vec3<f32> {
     let environment_irradiance = reflected_maps_irradiance(
         world_position,
         radiance_sample_direction(N, R, roughness),
         clusterable_object_index_ranges,
     );
     // Rec. 709 luminance.
-    let to_luminance = vec3<f32>(0.2126, 0.7152, 0.0722);
-    let environment = dot(environment_irradiance, to_luminance);
+    let environment = dot(environment_irradiance, vec3<f32>(0.2126, 0.7152, 0.0722));
     if (environment <= 0.0) {
-        return 1.0;
+        return vec3(1.0);
     }
-    return dot(baked_irradiance, to_luminance) / environment;
+    return baked_irradiance / max(environment_irradiance, vec3(MIN_CHANNEL_SHARE * environment));
 }

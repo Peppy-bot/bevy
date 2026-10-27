@@ -699,10 +699,11 @@ fn apply_pbr_lighting(
     found_diffuse_indirect = true;
 }
 
-    // The scale of the environment map's reflection. Where an irradiance
-    // volume holds the fragment, the reflection takes the level of the
-    // volume's light (`environment_map::baked_reflection_scale`).
-    var reflection_scale = 1.0;
+    // The scale of the environment map's reflection, per channel: the
+    // input's, and where an irradiance volume holds the fragment, the scale
+    // that gives the reflection the level and the colour of the volume's
+    // light (`environment_map::baked_reflection_scale`).
+    var reflection_scale = in.reflection_scale;
 
     @if(IRRADIANCE_VOLUME)
     // Irradiance volume light (indirect)
