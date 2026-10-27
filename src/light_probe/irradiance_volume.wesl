@@ -16,13 +16,35 @@ struct IrradianceVolumeLight {
     found: bool,
 };
 
-/// See:
-/// https://advances.realtimerendering.com/s2006/Mitchell-ShadingInValvesSourceEngine.pdf
-/// Slide 28, "Ambient Cube Basis"
+/// The diffuse light, along `N`, of the irradiance volumes that contain a
+/// fragment and light its diffuse.
 fn irradiance_volume_light(
     world_position: vec3<f32>,
     N: vec3<f32>,
     clusterable_object_index_ranges: ptr<function, ClusterableObjectIndexRanges>,
+) -> IrradianceVolumeLight {
+    return volumes_light(world_position, N, clusterable_object_index_ranges, false);
+}
+
+/// The light, along `N`, of every irradiance volume that contains a
+/// fragment, a lightmapped one included: the light the fragment's
+/// reflection takes of them.
+fn irradiance_volume_light_for_reflection(
+    world_position: vec3<f32>,
+    N: vec3<f32>,
+    clusterable_object_index_ranges: ptr<function, ClusterableObjectIndexRanges>,
+) -> IrradianceVolumeLight {
+    return volumes_light(world_position, N, clusterable_object_index_ranges, true);
+}
+
+/// See:
+/// https://advances.realtimerendering.com/s2006/Mitchell-ShadingInValvesSourceEngine.pdf
+/// Slide 28, "Ambient Cube Basis"
+fn volumes_light(
+    world_position: vec3<f32>,
+    N: vec3<f32>,
+    clusterable_object_index_ranges: ptr<function, ClusterableObjectIndexRanges>,
+    every_volume: bool,
 ) -> IrradianceVolumeLight {
     // Find all irradiance volumes that contain the fragment. We're going to
     // accumulate all the irradiance from them in a weighted sum.
@@ -46,7 +68,8 @@ fn irradiance_volume_light(
         // If we're lightmapped, and the irradiance volume contributes no diffuse
         // light, then bail out.
         @if(LIGHTMAP)
-        if ((query_result.flags & LIGHT_PROBE_FLAG_AFFECTS_LIGHTMAPPED_MESH_DIFFUSE) == 0u) {
+        if (!every_volume
+            && (query_result.flags & LIGHT_PROBE_FLAG_AFFECTS_LIGHTMAPPED_MESH_DIFFUSE) == 0u) {
             continue;
         }
 

@@ -7,6 +7,7 @@ import package::render::mesh_view_types::{
 import package::render::pbr_lighting::{F_Schlick_vec, LightingInput, LayerLightingInput, LAYER_BASE, LAYER_CLEARCOAT};
 import package::render::clustered_forward::ClusterableObjectIndexRanges;
 import bevy_render::maths::quat_rotate;
+@if(IRRADIANCE_VOLUME) import package::light_probe::irradiance_volume::irradiance_volume_light_for_reflection;
 
 /// The maximum representable value in a 32-bit floating point number.
 const FLOAT_MAX: f32 = 3.40282347e+38;
@@ -96,6 +97,15 @@ fn compute_cubemap_sample_dir(
 // Define two versions of this function, one for the case in which there are
 // multiple light probes and one for the case in which only the view light probe
 // is present.
+//
+// Without arrays of maps, the view's map is the one map bound, and a
+// reflection probe gives no map. A fragment inside a reflection probe that an
+// irradiance volume holds then reflects the volume's light in the place of the
+// view's map: the light that the volume gives a surface facing the direction
+// that the reflection samples, which, as a diffuse map's, is the radiance of
+// surroundings that give that light, as the rough reflection of the place
+// that the probe stands for. Where the probe fades out (its falloff), the
+// view's map makes up the rest of the weight.
 
 @if(MULTIPLE_LIGHT_PROBES_IN_ARRAY)
 
@@ -276,6 +286,20 @@ fn compute_radiances(
         radiance_sample_dir,
         radiance_level).rgb * intensity;
 
+    @if(IRRADIANCE_VOLUME) {
+        let probe_weight = reflection_probe_weight(world_position, clusterable_object_index_ranges);
+        if (probe_weight > 0.0) {
+            let volume = irradiance_volume_light_for_reflection(
+                world_position,
+                radiance_sample_direction(N, R, roughness),
+                clusterable_object_index_ranges,
+            );
+            if (volume.found) {
+                radiances.radiance = mix(radiances.radiance, volume.irradiance, probe_weight);
+            }
+        }
+    }
+
     return radiances;
 }
 
@@ -410,10 +434,12 @@ fn radiance_sample_direction(N: vec3<f32>, R: vec3<f32>, roughness: f32) -> vec3
 /// environment maps that give the fragment at `world_position` its
 /// reflection: the reflection probes that hold the fragment, weighted as
 /// `compute_radiances` weighs them, the view environment map making up the
-/// rest of the weight.
+/// rest of the weight. The fragment's normal `N` plays no part: each map is
+/// sampled along `direction`.
 @if(MULTIPLE_LIGHT_PROBES_IN_ARRAY)
 fn reflected_maps_irradiance(
     world_position: vec3<f32>,
+    N: vec3<f32>,
     direction: vec3<f32>,
     clusterable_object_index_ranges: ptr<function, ClusterableObjectIndexRanges>,
 ) -> vec3<f32> {
@@ -466,26 +492,68 @@ fn reflected_maps_irradiance(
 }
 
 @else   // MULTIPLE_LIGHT_PROBES_IN_ARRAY
-// The diffuse light, along `direction` (a world direction), of the view
-// environment map: without arrays of maps, it gives every reflection.
+// The diffuse light of what gives the fragment at `world_position` its
+// reflection without arrays of maps: the view environment map along
+// `direction` (a world direction), and inside a reflection probe that an
+// irradiance volume holds, the volume's along the fragment's normal `N`, as
+// `compute_radiances` weighs them. The volume's reflection is the room's own
+// light: over its light along the normal, the scale keeps its change from
+// one direction to another at the level of the baked light.
 fn reflected_maps_irradiance(
     world_position: vec3<f32>,
+    N: vec3<f32>,
     direction: vec3<f32>,
     clusterable_object_index_ranges: ptr<function, ClusterableObjectIndexRanges>,
 ) -> vec3<f32> {
-    if (light_probes.view_cubemap_index < 0) {
-        return vec3(0.0);
+    var irradiance = vec3(0.0);
+    if (light_probes.view_cubemap_index >= 0) {
+        // Rotating the world space ray direction by the environment map light view rotation,
+        // it is equivalent to rotating the environment cubemap itself.
+        var sample_dir = quat_rotate(light_probes.view_rotation, direction);
+        // Cube maps are left-handed so we negate the z coordinate.
+        sample_dir.z = -sample_dir.z;
+        irradiance = textureSampleLevel(
+            bindings::diffuse_environment_map,
+            bindings::environment_map_sampler,
+            sample_dir,
+            0.0).rgb * light_probes.intensity_for_view;
     }
-    // Rotating the world space ray direction by the environment map light view rotation,
-    // it is equivalent to rotating the environment cubemap itself.
-    var sample_dir = quat_rotate(light_probes.view_rotation, direction);
-    // Cube maps are left-handed so we negate the z coordinate.
-    sample_dir.z = -sample_dir.z;
-    return textureSampleLevel(
-        bindings::diffuse_environment_map,
-        bindings::environment_map_sampler,
-        sample_dir,
-        0.0).rgb * light_probes.intensity_for_view;
+    @if(IRRADIANCE_VOLUME) {
+        let probe_weight = reflection_probe_weight(world_position, clusterable_object_index_ranges);
+        if (probe_weight > 0.0) {
+            let volume = irradiance_volume_light_for_reflection(
+                world_position,
+                N,
+                clusterable_object_index_ranges,
+            );
+            if (volume.found) {
+                irradiance = mix(irradiance, volume.irradiance, probe_weight);
+            }
+        }
+    }
+    return irradiance;
+}
+
+/// The weight of the reflection probes that contain the fragment at
+/// `world_position`, up to 1: the share of its reflection that they give.
+fn reflection_probe_weight(
+    world_position: vec3<f32>,
+    clusterable_object_index_ranges: ptr<function, ClusterableObjectIndexRanges>,
+) -> f32 {
+    var iterator = light_probe_iterator_new(
+        world_position,
+        /*is_irradiance_volume=*/ false,
+        clusterable_object_index_ranges,
+    );
+    var total_weight = 0.0;
+    while (total_weight < 1.0) {
+        let query_result = light_probe_iterator_next(&iterator);
+        if (query_result.texture_index < 0) {
+            break;
+        }
+        total_weight += query_result.weight;
+    }
+    return min(total_weight, 1.0);
 }
 
 /// The least share of the luminance of the maps' diffuse light that
@@ -504,7 +572,8 @@ const MIN_CHANNEL_SHARE: f32 = 0.05;
 /// the fragment its reflection (the reflection probes that hold it, then
 /// the view environment map, `reflected_maps_irradiance`) along the
 /// direction that the reflection samples (`radiance_sample_direction` of
-/// `N`, the reflected view direction `R` and `roughness`), or over
+/// `N`, the reflected view direction `R` and `roughness`; without arrays of
+/// maps, an irradiance volume inside a reflection probe along `N`), or over
 /// `MIN_CHANNEL_SHARE` of that light's luminance where the channel is
 /// darker. The scaled reflection is the baked light times the maps'
 /// reflection over the maps' diffuse light along one direction: it keeps
@@ -528,6 +597,7 @@ fn baked_reflection_scale(
 ) -> vec3<f32> {
     let environment_irradiance = reflected_maps_irradiance(
         world_position,
+        N,
         radiance_sample_direction(N, R, roughness),
         clusterable_object_index_ranges,
     );
