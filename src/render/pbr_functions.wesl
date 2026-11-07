@@ -346,7 +346,11 @@ fn apply_pbr_lighting(
     let specular_occlusion = in.specular_occlusion;
 
     // Neubelt and Pettineo 2013, "Crafting a Next-gen Material Pipeline for The Order: 1886"
-    let NdotV = max(dot(in.N, in.V), 0.0001);
+    // The upper bound keeps 1 - NdotV at 0 or more where the view meets the
+    // surface along its normal and the dot of the two unit vectors rounds
+    // past 1: Schlick's Fresnel raises it to a power, and a power of a
+    // negative base is undefined in WGSL (Mesa's lavapipe gives NaN).
+    let NdotV = clamp(dot(in.N, in.V), 0.0001, 1.0);
     let R = reflect(-in.V, in.N);
 
     // Do the above calculations again for the clearcoat layer. Remember that
@@ -360,7 +364,7 @@ fn apply_pbr_lighting(
     @if(STANDARD_MATERIAL_CLEARCOAT)
     let clearcoat_N = in.clearcoat_N;
     @if(STANDARD_MATERIAL_CLEARCOAT)
-    let clearcoat_NdotV = max(dot(clearcoat_N, in.V), 0.0001);
+    let clearcoat_NdotV = clamp(dot(clearcoat_N, in.V), 0.0001, 1.0);
     @if(STANDARD_MATERIAL_CLEARCOAT)
     let clearcoat_R = reflect(-in.V, clearcoat_N);
 
