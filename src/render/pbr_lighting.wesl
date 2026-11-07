@@ -300,12 +300,24 @@ fn V_Kelemen(LdotH: f32) -> f32 {
     return 0.25 / (l_dot_h * l_dot_h);
 }
 
+/// The weight of f_90 in Schlick's Fresnel, (1 − v⋅h)^5, for the cosine
+/// `VdotH` of two unit vectors.
+///
+/// The base of the power stays in 0 to 1. A cosine of two vectors that are
+/// nearly parallel can round past 1: `NdotV`, `max(dot(N, V), 0.0001)`,
+/// reads 1 + 1.2e-7 where the view meets a surface along its normal. A
+/// power of a negative base is undefined in WGSL, and Mesa's lavapipe
+/// gives NaN for it.
+fn schlick_weight(VdotH: f32) -> f32 {
+    return pow(saturate(1.0 - VdotH), 5.0);
+}
+
 /// Fresnel function
 /// see https://google.github.io/filament/Filament.md.html#citation-schlick94
 /// F_Schlick(v,h,f_0,f_90) = f_0 + (f_90 − f_0) (1 − v⋅h)^5
 fn F_Schlick_vec(f0: vec3<f32>, f90: f32, VdotH: f32) -> vec3<f32> {
     // not using mix to keep the vec3 and float versions identical
-    return f0 + (f90 - f0) * pow(1.0 - VdotH, 5.0);
+    return f0 + (f90 - f0) * schlick_weight(VdotH);
 }
 
 /// Fresnel function
@@ -313,7 +325,7 @@ fn F_Schlick_vec(f0: vec3<f32>, f90: f32, VdotH: f32) -> vec3<f32> {
 /// F_Schlick(v,h,f_0,f_90) = f_0 + (f_90 − f_0) (1 − v⋅h)^5
 fn F_Schlick(f0: f32, f90: f32, VdotH: f32) -> f32 {
     // not using mix to keep the vec3 and float versions identical
-    return f0 + (f90 - f0) * pow(1.0 - VdotH, 5.0);
+    return f0 + (f90 - f0) * schlick_weight(VdotH);
 }
 
 fn fresnel(f0: vec3<f32>, LdotH: f32) -> vec3<f32> {
