@@ -104,8 +104,15 @@ fn updateSectors(
     samples_per_slice: f32,
     bitmask: u32,
 ) -> u32 {
-    let start_horizon = u32(min_horizon * samples_per_slice);
-    let angle_horizon = u32(ceil((max_horizon - min_horizon) * samples_per_slice));
+    // Whole sectors, each counted when the horizons cover half of it or
+    // more. A count of each sector that the horizons touch, however little
+    // of it, darkens a flat open surface: the depth that a sample reads
+    // from a MIP level stands a little off the plane of the pixel, so its
+    // horizons span a sliver of the sector at the edge of the hemisphere,
+    // one sector of the few of a slice.
+    let start_horizon = u32(round(min_horizon * samples_per_slice));
+    let end_horizon = u32(round(max_horizon * samples_per_slice));
+    let angle_horizon = end_horizon - min(start_horizon, end_horizon);
 
     return insertBits(bitmask, 0xFFFFFFFFu, start_horizon, angle_horizon);
 }
