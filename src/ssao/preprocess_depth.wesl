@@ -1,4 +1,6 @@
-//! Inputs a depth texture and outputs a MIP-chain of depths.
+//! Inputs a depth texture and outputs a MIP-chain of depths, of 4 levels:
+//! one storage texture for each, and WebGPU guarantees 4 storage textures
+//! per shader stage.
 //!
 //! Because SSAO's performance is bound by texture reads, this increases
 //! performance over using the full resolution depth for every sample.
@@ -13,14 +15,12 @@ import bevy_render::view::View;
 @group(0) @binding(2) var preprocessed_depth_mip1: texture_storage_2d<r16float, write>;
 @group(0) @binding(3) var preprocessed_depth_mip2: texture_storage_2d<r16float, write>;
 @group(0) @binding(4) var preprocessed_depth_mip3: texture_storage_2d<r16float, write>;
-@group(0) @binding(5) var preprocessed_depth_mip4: texture_storage_2d<r16float, write>;
 }
 @if(!USE_R16FLOAT) {
 @group(0) @binding(1) var preprocessed_depth_mip0: texture_storage_2d<r32float, write>;
 @group(0) @binding(2) var preprocessed_depth_mip1: texture_storage_2d<r32float, write>;
 @group(0) @binding(3) var preprocessed_depth_mip2: texture_storage_2d<r32float, write>;
 @group(0) @binding(4) var preprocessed_depth_mip3: texture_storage_2d<r32float, write>;
-@group(0) @binding(5) var preprocessed_depth_mip4: texture_storage_2d<r32float, write>;
 }
 @group(1) @binding(0) var point_clamp_sampler: sampler;
 @group(1) @binding(1) var linear_clamp_sampler: sampler;
@@ -94,18 +94,5 @@ fn preprocess_depth(@builtin(global_invocation_id) global_id: vec3<u32>, @builti
         let depth3 = previous_mip_depth[local_id.x + 2u][local_id.y + 2u];
         let depth_mip3 = weighted_average(depth0, depth1, depth2, depth3);
         textureStore(preprocessed_depth_mip3, base_coordinates / 4i, vec4<f32>(depth_mip3, 0.0, 0.0, 0.0));
-        previous_mip_depth[local_id.x][local_id.y] = depth_mip3;
-    }
-
-    workgroupBarrier();
-
-    // MIP 4 - Weighted average of MIP 3's depth values (per invocation, 1 invocation per workgroup)
-    if all(local_id.xy % vec2<u32>(8u) == vec2<u32>(0u)) {
-        let depth0 = previous_mip_depth[local_id.x + 0u][local_id.y + 0u];
-        let depth1 = previous_mip_depth[local_id.x + 4u][local_id.y + 0u];
-        let depth2 = previous_mip_depth[local_id.x + 0u][local_id.y + 4u];
-        let depth3 = previous_mip_depth[local_id.x + 4u][local_id.y + 4u];
-        let depth_mip4 = weighted_average(depth0, depth1, depth2, depth3);
-        textureStore(preprocessed_depth_mip4, base_coordinates / 8i, vec4<f32>(depth_mip4, 0.0, 0.0, 0.0));
     }
 }

@@ -39,6 +39,13 @@ use bevy_utils::prelude::default;
 use core::mem;
 use tracing::{error, warn};
 
+/// The MIP levels of the preprocessed depth. The depth preprocessing
+/// writes each of them as a storage texture in one compute stage, and
+/// WebGPU guarantees 4 storage textures per shader stage and no more, so
+/// 4 levels run on every WebGPU device. The occlusion pass reads the last
+/// level for each sample that asks for a higher one.
+const PREPROCESSED_DEPTH_MIPS: u32 = 4;
+
 /// Plugin for screen space ambient occlusion.
 pub struct ScreenSpaceAmbientOcclusionPlugin;
 
@@ -63,9 +70,9 @@ impl Plugin for ScreenSpaceAmbientOcclusionPlugin {
             .resource::<RenderDevice>()
             .limits()
             .max_storage_textures_per_shader_stage
-            < 5
+            < PREPROCESSED_DEPTH_MIPS
         {
-            warn!("ScreenSpaceAmbientOcclusionPlugin not loaded. GPU lacks support: Limits::max_storage_textures_per_shader_stage is less than 5.");
+            warn!("ScreenSpaceAmbientOcclusionPlugin not loaded. GPU lacks support: Limits::max_storage_textures_per_shader_stage is less than 4.");
             return;
         }
 
@@ -107,7 +114,8 @@ impl Plugin for ScreenSpaceAmbientOcclusionPlugin {
 /// TAA (`TemporalAntiAliasing`).
 /// Doing so greatly reduces SSAO noise.
 ///
-/// SSAO is not supported on `WebGL2`, and is not currently supported on `WebGPU`.
+/// SSAO is not supported on `WebGL2`. It runs on `WebGPU`: no stage of it
+/// writes more than 4 storage textures.
 #[derive(Component, ExtractComponent, Reflect, PartialEq, Clone, Debug)]
 #[reflect(Component, Debug, Default, PartialEq, Clone)]
 #[require(DepthPrepass, NormalPrepass)]
@@ -371,7 +379,6 @@ impl FromWorld for SsaoPipelines {
                     texture_storage_2d(depth_format, StorageTextureAccess::WriteOnly),
                     texture_storage_2d(depth_format, StorageTextureAccess::WriteOnly),
                     texture_storage_2d(depth_format, StorageTextureAccess::WriteOnly),
-                    texture_storage_2d(depth_format, StorageTextureAccess::WriteOnly),
                 ),
             ),
         );
@@ -548,7 +555,7 @@ fn prepare_ssao_textures(
             TextureDescriptor {
                 label: Some("ssao_preprocessed_depth_texture"),
                 size,
-                mip_level_count: 5,
+                mip_level_count: PREPROCESSED_DEPTH_MIPS,
                 sample_count: 1,
                 dimension: TextureDimension::D2,
                 format: pipelines.depth_format,
@@ -719,7 +726,6 @@ fn prepare_ssao_bind_groups(
                 &create_depth_view(1),
                 &create_depth_view(2),
                 &create_depth_view(3),
-                &create_depth_view(4),
             )),
         );
 
