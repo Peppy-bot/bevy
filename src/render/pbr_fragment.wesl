@@ -516,6 +516,7 @@ pbr_input.material.uv_transform = uv_transform;
 
         var diffuse_occlusion: vec3<f32> = vec3(1.0);
         var specular_occlusion: f32 = 1.0;
+        var screen_space_occlusion: vec3<f32> = vec3(1.0);
 @if(VERTEX_UVS)
         if ((flags & pbr_types::STANDARD_MATERIAL_FLAGS_OCCLUSION_TEXTURE_BIT) != 0u) {
             @if(BINDLESS)
@@ -540,6 +541,15 @@ pbr_input.material.uv_transform = uv_transform;
         let ssao = textureLoad(screen_space_ambient_occlusion_texture, ssao_tex_pos, 0i).r;
         let ssao_multibounce = ssao_multibounce(ssao, pbr_input.material.base_color.rgb);
         diffuse_occlusion = min(diffuse_occlusion, ssao_multibounce);
+        // The light that this occlusion darkens has no shadow of its own, and
+        // the occlusion stands for that shadow: a shadow gets no light back
+        // from the bounces that the multi-bounce term adds. The visibility
+        // bitmask counts the sectors that the few samples of a slice cover
+        // alone, so it reads about 0.8 on a floor 3 cm from a box of 0.4 m,
+        // which hides close to half of the hemisphere there. The square
+        // brings that to about 0.6 and leaves an open surface, which reads
+        // 1.0, as it is.
+        screen_space_occlusion = vec3<f32>(ssao * ssao);
         // Use SSAO to estimate the specular occlusion.
         // Lagarde and Rousiers 2014, "Moving Frostbite to Physically Based Rendering"
         let roughness = lighting::perceptualRoughnessToRoughness(pbr_input.material.perceptual_roughness);
@@ -547,6 +557,7 @@ pbr_input.material.uv_transform = uv_transform;
 }
         pbr_input.diffuse_occlusion = diffuse_occlusion;
         pbr_input.specular_occlusion = specular_occlusion;
+        pbr_input.screen_space_occlusion = screen_space_occlusion;
 
         // N (normal vector)
 @if(!LOAD_PREPASS_NORMALS) {

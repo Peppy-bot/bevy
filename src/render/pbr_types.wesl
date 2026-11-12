@@ -127,6 +127,14 @@ struct PbrInput {
     /// `apply_pbr_lighting` replaces it where an irradiance volume holds the
     /// fragment.
     reflection_scale: vec3<f32>,
+    /// The square of the screen-space ambient occlusion alone, without the
+    /// material's occlusion texture and without the multi-bounce term of
+    /// `diffuse_occlusion`. Defaults to 1.0, which it also is without SSAO.
+    /// `apply_pbr_lighting` darkens with it the light that has no shadow
+    /// of its own and that `diffuse_occlusion` does not reach: the
+    /// lightmap's light, and the direct light of each point and spot light
+    /// that casts no shadow.
+    screen_space_occlusion: vec3<f32>,
 };
 
 /// Creates a PbrInput with default values
@@ -138,6 +146,7 @@ fn pbr_input_new() -> PbrInput {
     // If SSAO is enabled, then this gets overwritten with proper specular occlusion. If its not, then we get specular environment map unoccluded (we have no data with which to occlude it with).
     pbr_input.specular_occlusion = 1.0;
     pbr_input.reflection_scale = vec3<f32>(1.0);
+    pbr_input.screen_space_occlusion = vec3<f32>(1.0);
 
     pbr_input.frag_coord = vec4<f32>(0.0, 0.0, 0.0, 1.0);
     pbr_input.world_position = vec4<f32>(0.0, 0.0, 0.0, 1.0);

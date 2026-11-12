@@ -322,6 +322,20 @@ fn calculate_contact_shadow(
     return 1.0;
 }
 
+/// The share of the direct light of a point or spot light with `flags`
+/// that reaches a fragment under the screen-space ambient occlusion
+/// `screen_space_occlusion`. A light that casts shadows has its shadow map
+/// for that, so it keeps all of its light here. A light that casts none
+/// takes the occlusion in the place of a shadow, so what stands on a
+/// surface darkens the surface under such a light.
+@if(!PREPASS_FRAGMENT)
+fn unshadowed_light_occlusion(flags: u32, screen_space_occlusion: vec3<f32>) -> vec3<f32> {
+    if (flags & mesh_view_types::POINT_LIGHT_FLAGS_SHADOWS_ENABLED_BIT) != 0u {
+        return vec3<f32>(1.0);
+    }
+    return screen_space_occlusion;
+}
+
 @if(!PREPASS_FRAGMENT)
 fn apply_pbr_lighting(
     in: pbr_types::PbrInput,
@@ -344,6 +358,7 @@ fn apply_pbr_lighting(
 
     let diffuse_occlusion = in.diffuse_occlusion;
     let specular_occlusion = in.specular_occlusion;
+    let screen_space_occlusion = in.screen_space_occlusion;
 
     // Neubelt and Pettineo 2013, "Crafting a Next-gen Material Pipeline for The Order: 1886"
     // The upper bound keeps 1 - NdotV at 0 or more where the view meets the
@@ -493,7 +508,10 @@ fn apply_pbr_lighting(
         }
 
         let light_contrib = lighting::point_light(light_id, &lighting_input, enable_diffuse, true);
-        direct_light += light_contrib * shadow;
+        direct_light += light_contrib * shadow * unshadowed_light_occlusion(
+            view_bindings::clustered_lights.data[light_id].flags,
+            screen_space_occlusion,
+        );
 
 @if(STANDARD_MATERIAL_DIFFUSE_TRANSMISSION) {
         // NOTE: We use the diffuse transmissive color, the second Lambertian lobe's calculated
@@ -554,7 +572,10 @@ fn apply_pbr_lighting(
         }
 
         let light_contrib = lighting::spot_light(light_id, &lighting_input, enable_diffuse);
-        direct_light += light_contrib * shadow;
+        direct_light += light_contrib * shadow * unshadowed_light_occlusion(
+            view_bindings::clustered_lights.data[light_id].flags,
+            screen_space_occlusion,
+        );
 
 @if(STANDARD_MATERIAL_DIFFUSE_TRANSMISSION) {
         // NOTE: We use the diffuse transmissive color, the second Lambertian lobe's calculated
@@ -699,7 +720,9 @@ fn apply_pbr_lighting(
     var found_diffuse_indirect = false;
 
 @if(LIGHTMAP) {
-    indirect_light += in.lightmap_light * diffuse_color;
+    // The bake holds no occlusion of what stands on the lightmapped surface
+    // now, so the screen-space occlusion darkens the lightmap's light.
+    indirect_light += in.lightmap_light * diffuse_color * screen_space_occlusion;
     found_diffuse_indirect = true;
 }
 
